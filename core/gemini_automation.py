@@ -27,7 +27,7 @@ try:
     from selenium.webdriver.common.action_chains import ActionChains
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
-    from selenium.common.exceptions import TimeoutException, NoSuchElementException
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
     from webdriver_manager.chrome import ChromeDriverManager
     SELENIUM_AVAILABLE = True
 except ImportError:
@@ -657,6 +657,9 @@ class GeminiAutomation:
             # Timeout - try to extract JSON anyway
             return self._extract_json_from_page()
             
+        except WebDriverException:
+            print("Response wait interrupted: Browser closed or disconnected")
+            return ""
         except Exception as e:
             print(f"Failed to get response: {e}")
             return ""
@@ -856,9 +859,9 @@ class GeminiAutomation:
                 progress_callback(0, f"Error: {e}")
             return []
         finally:
-            # Keep browser open for debugging (optional)
-            # self.close_browser()
-            pass
+            # Ensure browser is closed on completion or cancellation
+            # User request: "if clicked cancel ... browser should be closed"
+            self.close_browser()
     
     def __del__(self):
         """Cleanup on deletion."""

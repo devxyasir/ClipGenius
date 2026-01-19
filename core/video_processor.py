@@ -22,22 +22,30 @@ from utils.constants import (
 class VideoProcessor:
     """Processes videos: clipping, format conversion, enhancement."""
     
-    def __init__(self, ffmpeg_path: str = None):
+    def __init__(self, ffmpeg_path: str = None, log_callback: Callable = None):
         """Initialize video processor.
         
         Args:
             ffmpeg_path: Path to ffmpeg executable. Uses FFMPEG_PATH from constants if not provided.
+            log_callback: Optional callback for logging messages
         """
         self.ffmpeg_path = ffmpeg_path or FFMPEG_PATH
         self.ffprobe_path = FFPROBE_PATH
+        self.log_callback = log_callback or print
+        
         self._verify_ffmpeg()
         
         # Detect GPU for hardware encoding
         self.gpu_encoder = self._detect_gpu()
         if self.gpu_encoder:
-            print(f"⚡ GPU detected! Using {self.gpu_encoder} for hardware encoding (3-5x faster)")
+            self.log(f"⚡ GPU detected! Using {self.gpu_encoder} for hardware encoding (3-5x faster)")
         else:
-            print("💻 Using CPU encoding (libx264)")
+            self.log("💻 Using CPU encoding (libx264)")
+            
+    def log(self, message: str):
+        """Log message to callback or print."""
+        if self.log_callback:
+            self.log_callback(str(message))
     
     def _detect_gpu(self) -> Optional[str]:
         """Detect available GPU encoder.
@@ -71,7 +79,8 @@ class VideoProcessor:
                     if test.returncode == 0:
                         return encoder
         except Exception as e:
-            print(f"GPU detection error: {e}")
+            # Silent fail for GPU detection unless critical
+            pass
         
         return None
     
@@ -85,7 +94,7 @@ class VideoProcessor:
             )
             return True
         except (subprocess.SubprocessError, FileNotFoundError):
-            print("Warning: FFmpeg not found. Video processing may fail.")
+            self.log("Warning: FFmpeg not found. Video processing may fail.")
             return False
     
     def _get_encoder_args(self, high_quality: bool = False) -> list:
@@ -254,7 +263,7 @@ class VideoProcessor:
         if not os.path.exists(input_path):
             raise RuntimeError(f"Input video file not found at: {input_path}")
 
-        print(f"DEBUG: Running FFmpeg command: {' '.join(cmd)}")
+        self.log(f"DEBUG: Running FFmpeg command: {' '.join(cmd)}")
         
         try:
             # Use shell=True for Windows if needed, but usually better without if full path provided
@@ -268,7 +277,7 @@ class VideoProcessor:
             _, stderr = process.communicate()
             
             if process.returncode != 0:
-                print(f"FFmpeg stderr: {stderr}")
+                self.log(f"FFmpeg stderr: {stderr}")
                 raise RuntimeError(f"FFmpeg error: {stderr}")
             
             return output_path
@@ -310,21 +319,21 @@ class VideoProcessor:
         encoder_args = self._get_encoder_args()
         
         if blur_background and is_horizontal:
-            # Create blurred background effect for horizontal videos
-            # This is a COMPLEX filter (multiple inputs) - use -filter_complex
+            # User Change: Black background + Zoomed in a bit (Height 720)
+            # Original aspect fitting (width 1080) -> Height ~607
+            # We scale to Height 720 (Zoom ~1.2x) and crop width
+            # We scale to ensure it covers 1080x720 area (Zoom ~1.2x relative to fit)
             filter_complex = (
-                f"[0:v]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-                f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},boxblur=20:20[bg];"
-                f"[0:v]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]"
+                f"scale=1080:720:force_original_aspect_ratio=increase,"
+                f"crop=1080:720,"
+                f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
             )
+            # Note: This is now a simple filter chain, can use -vf
             cmd = [
                 self.ffmpeg_path,
                 "-y",
                 "-i", input_path,
-                "-filter_complex", filter_complex,
-                "-map", "[outv]",
-                "-map", "0:a?",  # Map audio if exists (? = optional)
+                "-vf", filter_complex,
             ] + encoder_args + [
                 "-pix_fmt", "yuv420p",
                 "-c:a", AUDIO_CODEC,
@@ -332,6 +341,8 @@ class VideoProcessor:
                 "-r", str(OUTPUT_FPS),
                 output_path
             ]
+     
+            # Command is ready for execution (fall through to subprocess.run)
         else:
             # Simple scale and pad - use regular -vf
             simple_filter = (
@@ -351,14 +362,14 @@ class VideoProcessor:
                 output_path
             ]
         
-        print(f"DEBUG: Running vertical conversion: {' '.join(cmd)}")
+        self.log(f"DEBUG: Running vertical conversion: {' '.join(cmd)}")
         
         try:
             # text=True ensures stdout/stderr are strings, not bytes
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return output_path
         except subprocess.CalledProcessError as e:
-            print(f"FFmpeg conversion stderr: {e.stderr}")
+            self.log(f"FFmpeg conversion stderr: {e.stderr}")
             raise RuntimeError(f"Failed to convert video: {e.stderr}")
         except subprocess.SubprocessError as e:
             raise RuntimeError(f"Failed to convert video subprocess error: {e}")
@@ -438,7 +449,8 @@ class VideoProcessor:
         enhance: bool = True,
         max_workers: int = None,  # Auto-detect if None
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        cancel_check: Callable = None
+        cancel_check: Callable = None,
+        log_callback: Optional[Callable[[str], None]] = None
     ) -> List[str]:
         """Process multiple clips in parallel using ThreadPoolExecutor.
         
@@ -464,21 +476,31 @@ class VideoProcessor:
             # So workers = CPU cores / 2, minimum 2, maximum 6
             max_workers = max(2, min(6, cpu_count // 2))
         
-        print(f"🚀 Processing {len(clips)} clips with {max_workers} parallel workers")
+        self.log(f"🚀 Processing {len(clips)} clips with {max_workers} parallel workers")
         
         results = []
         total = len(clips)
         
         def process_single_clip(idx: int, clip: dict) -> Tuple[int, str]:
             title = clip.get('title', f'clip_{idx+1}')
-            safe_title = self._sanitize_filename(title)
+            
+            # User request: filename should include original video title
+            # Format: {original_stem}_clip{idx+1}_{title}
+            original_stem = Path(input_path).stem
+            sanitized_stem = self._sanitize_filename(original_stem)
+            sanitized_title = self._sanitize_filename(title)
+            
+            safe_title = f"{sanitized_stem}_clip{idx+1}_{sanitized_title}"
+            # Ensure filename isn't too long
+            if len(safe_title) > 200:
+                safe_title = safe_title[:200]
             start = clip.get('start_time', '0:00')
             end = clip.get('end_time', '1:00')
             
-            print(f"📹 [{idx+1}/{total}] Processing clip: {title} ({start} - {end})")
+            self.log(f"📹 [{idx+1}/{total}] Processing clip: {title} ({start} - {end})")
             start_sec = self.time_to_seconds(start)
             end_sec = self.time_to_seconds(end)
-            print(f"   ℹ️  Timestamps: {start} -> {start_sec}s, {end} -> {end_sec}s")
+            self.log(f"   ℹ️  Timestamps: {start} -> {start_sec}s, {end} -> {end_sec}s")
             
             try:
                 # Step 1: Clip
@@ -488,7 +510,7 @@ class VideoProcessor:
                 if not clip_path.exists() or clip_path.stat().st_size < 1000:
                     raise RuntimeError("Clip file is empty or too small (splitting failed)")
                     
-                print(f"   ✓ Clipped: {safe_title}")
+                self.log(f"   ✓ Clipped: {safe_title}")
                 
                 # Step 2: Convert to vertical if needed
                 if vertical:
@@ -496,25 +518,25 @@ class VideoProcessor:
                     self.convert_to_vertical(str(clip_path), str(vertical_path))
                     os.remove(clip_path)
                     clip_path = vertical_path
-                    print(f"   ✓ Converted to vertical: {safe_title}")
+                    self.log(f"   ✓ Converted to vertical: {safe_title}")
                 
                 # Step 3: Enhance if needed
                 if enhance:
                     enhanced_path = output_dir / f"{safe_title}.mp4"
                     self.enhance_video(str(clip_path), str(enhanced_path))
                     os.remove(clip_path)
-                    print(f"   ✓ Enhanced: {safe_title}")
+                    self.log(f"   ✓ Enhanced: {safe_title}")
                     return idx, str(enhanced_path)
                 
                 # Rename to final
                 final_path = output_dir / f"{safe_title}.mp4"
                 if clip_path != final_path:
                     os.rename(clip_path, final_path)
-                print(f"   ✅ Complete: {safe_title}")
+                self.log(f"   ✅ Complete: {safe_title}")
                 return idx, str(final_path)
                 
             except Exception as e:
-                print(f"   ❌ Failed: {title} - {str(e)}")
+                self.log(f"   ❌ Failed: {title} - {str(e)}")
                 raise
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -527,7 +549,7 @@ class VideoProcessor:
             failed = 0
             for future in as_completed(futures):
                 if cancel_check and cancel_check():
-                    print("🛑 Processing cancelled by user")
+                    self.log("🛑 Processing cancelled by user")
                     executor.shutdown(wait=False, cancel_futures=True)
                     return []
 
@@ -537,14 +559,14 @@ class VideoProcessor:
                     completed += 1
                 except Exception as e:
                     failed += 1
-                    print(f"⚠️ Clip processing failed, continuing with others...")
+                    self.log(f"⚠️ Clip processing failed, continuing with others...")
                 
                 if progress_callback:
                     clip_idx = futures[future]
                     clip_title = clips[clip_idx].get('title', f'clip_{clip_idx+1}')
                     progress_callback(completed + failed, total, clip_title)
         
-        print(f"✨ Batch complete: {completed} succeeded, {failed} failed")
+        self.log(f"✨ Batch complete: {completed} succeeded, {failed} failed")
         
         # Sort by original index and return paths
         results.sort(key=lambda x: x[0])

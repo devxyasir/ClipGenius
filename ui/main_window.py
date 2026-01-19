@@ -33,6 +33,7 @@ class WorkerThread(QThread):
     finished = pyqtSignal(object)  # result
     error = pyqtSignal(str)  # error message
     cancelled = pyqtSignal()  # cancelled signal
+    log = pyqtSignal(str)  # log message signal
     
     def __init__(self, target, *args, **kwargs):
         super().__init__()
@@ -55,6 +56,8 @@ class WorkerThread(QThread):
             # Pass progress callback and cancel check function
             self.kwargs['progress_callback'] = lambda p, s: self.progress.emit(int(p), s)
             self.kwargs['cancel_check'] = lambda: self._cancel_requested
+            # Pass log callback if supported by target
+            self.kwargs['log_callback'] = lambda msg: self.log.emit(str(msg))
             result = self.target(*self.args, **self.kwargs)
             
             if self._cancel_requested:
@@ -1068,7 +1071,7 @@ class MainWindow(QMainWindow):
         self.last_action = 'generate'
         self.progress_label.setText("Processing...")
         
-        def generate(progress_callback=None, cancel_check=None):
+        def generate(progress_callback=None, cancel_check=None, log_callback=None):
             from core.video_processor import VideoProcessor
             from core.audio_processor import AudioProcessor
             from core.caption_generator import CaptionGenerator
@@ -1078,14 +1081,26 @@ class MainWindow(QMainWindow):
             pm.current_project = self.current_project
             exports_folder = pm.get_exports_folder()
             
+            # User request: Output to folder named after original video
+            video_name = Path(self.current_video_path).stem
+            sanitized_folder_name = "".join([c for c in video_name if c.isalnum() or c in "._- "]).strip()
+            # If name is empty (e.g. all special chars), fallback
+            if not sanitized_folder_name:
+                sanitized_folder_name = f"video_{int(time.time())}"
+                
+            project_exports = os.path.join(exports_folder, sanitized_folder_name)
+            os.makedirs(project_exports, exist_ok=True)
+            
             vp = VideoProcessor()
+            if log_callback:
+                vp.log_callback = log_callback
             ap = AudioProcessor()
             
             # Process clips
             output_paths = vp.process_clips_batch(
                 self.current_video_path,
                 self.clips,
-                exports_folder,
+                project_exports,  # Use subfolder
                 vertical=True,
                 enhance=self.video_enhance_check.isChecked(),
                 max_workers=4,
@@ -1140,6 +1155,7 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_generation_complete)
         self.worker.error.connect(self._on_generation_error)
         self.worker.cancelled.connect(lambda: self._log("Generation cancelled"))
+        self.worker.log.connect(lambda msg: self._log(msg))
         self.worker.start()
     
     def _on_generation_complete(self, paths):
