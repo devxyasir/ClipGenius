@@ -1,0 +1,36 @@
+{
+  "upload_button": {
+    "x": 643,
+    "y": 583,
+    "description": "Plus button"
+  },
+  "upload_file_option": {
+    "x": 654,
+    "y": 643,
+    "description": "Upload option"
+  },
+  "file_dialog_path": {
+    "x": 507,
+    "y": 896,
+    "description": "File input"
+  },
+  "file_dialog_open": {
+    "x": 766,
+    "y": 926,
+    "description": "Open button"
+  },
+  "send_button": {
+    "x": 1339,
+    "y": 634,
+    "description": "Send button"
+  },
+  "send_button_2": {
+    "x": 1339,
+    "y": 696,
+    "description": "Send button (text expanded)"
+  },
+  "screen_resolution": {
+    "width": 1920,
+    "height": 1080
+  }
+}

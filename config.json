@@ -1,0 +1,17 @@
+{
+  "chrome_profile_path": "",
+  "chrome_user_data_dir": "",
+  "min_clip_duration": 60,
+  "max_clip_duration": 120,
+  "enable_captions": false,
+  "enable_background_music": false,
+  "background_music_volume": 30,
+  "enable_video_enhancement": true,
+  "enable_audio_enhancement": true,
+  "output_directory": "C:\\Users\\jamya\\Desktop\\ClipGenius",
+  "last_project": "C:\\Users\\jamya\\Desktop\\ClipGenius\\Podcast_20260119_083552",
+  "recent_projects": [
+    "C:\\Users\\jamya\\Desktop\\ClipGenius\\test_20260119_130832"
+  ],
+  "cookies_file": "C:/Users/jamya/Downloads/gemini.google.com_cookies (1).txt"
+}

@@ -1,0 +1,23 @@
+# ClipGenius - Dependencies
+
+# GUI Framework
+PyQt6>=6.6.0
+
+# Browser Automation
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
+# Video Download
+yt-dlp>=2024.1.0
+
+# Video/Audio Processing
+moviepy>=1.0.3
+ffmpeg-python>=0.2.0
+pydub>=0.25.1
+
+# Speech Recognition (for captions)
+openai-whisper>=20231117
+SpeechRecognition>=3.10.0
+
+# Utilities
+requests>=2.31.0
